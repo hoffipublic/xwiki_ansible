@@ -1,0 +1,31 @@
+# include_vars: setupvariables.yml
+
+java_package: openjdk-8-jdk
+
+postgresql_user: postgres
+postgresql_pass: postgres
+postgresql_group: postgres
+postgresql_service_state: started
+postgresql_service_enabled: true
+postgresql_jdbc_driver_version: "42.2.7"
+postgresql_jdbc_driver_filename: "postgresql-{{ postgresql_jdbc_driver_version }}.jar"
+postgresql_jdbc_driver_url: "https://jdbc.postgresql.org/download/{{ postgresql_jdbc_driver_filename }}"
+postgresql_xwiki_db: xwiki
+postgresql_xwiki_user: xwiki
+postgresql_xwiki_pass: xwiki
+
+# overwriting https://github.com/CSCfi/ansible-role-jetty defaults/main.yml
+#jetty_version: 9.4.19.v20190610
+jetty_dst_dir: /opt
+jetty_user_homedir: /opt/jetty
+jetty_user_name: jetty
+jetty_group_name: jetty
+jetty_port: 80
+
+jetty_webapps_path: "{{ jetty_user_homedir }}/webapps"
+
+xwiki_version: "9.4"
+xwiki_download_url: "http://download.forge.ow2.org/xwiki/xwiki-enterprise-web-{{ xwiki_version }}.war"
+xwiki_filename: xwiki-{{ xwiki_version }}.war
+xwiki_tmpdir: "{{ jetty_user_homedir }}/xwikitmp"
+jetty_xwiki_path: "{{ jetty_webapps_path }}/xwiki"

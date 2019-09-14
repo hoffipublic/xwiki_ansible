@@ -1,0 +1,16 @@
+
+---
+- hosts: all
+  roles:
+  - role: prepare_java
+    become: yes
+  - role: geerlingguy.java
+    java_packages:
+    - "{{ java_package }}"
+    become: yes
+  - role: geerlingguy.postgresql
+    become: yes
+  - role: cscfi.jetty
+    become: yes
+  - role: xwiki
+    become: yes

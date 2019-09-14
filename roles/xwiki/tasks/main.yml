@@ -1,0 +1,156 @@
+##############
+# role xwiki #
+##############
+
+- name: install prerequisites
+  apt: name={{ packages }} state=present
+  vars:
+    packages:
+    - libpq-dev
+    - python-psycopg2
+    - zip
+    - unzip
+    - httpie
+  become: yes
+  tags:
+    - packages
+
+# start jetty as a service
+- name: Template jetty systemd service configuration to /etc/files.conf
+  template:
+    src: jetty-systemd-service.j2
+    dest: /lib/systemd/system/jetty.service
+    owner: root
+    group: root
+    mode: '0644'
+  notify: Restart jetty
+
+###############################################################################
+# postgresql RDBMS for xwiki
+###############################################################################
+- name: Ensure PostgreSQL is started on boot (installed by geerlingguy.postgresql)
+  service: name=postgresql enabled=yes
+
+# Note: If a template different from "template0" is specified, encoding and locale settings must match those of the template.
+- name: Create a new database with name "{{postgresql_xwiki_db}}" and specific encoding and locale # settings.
+  postgresql_db:
+    name: "{{postgresql_xwiki_db}}"
+    encoding: "UTF-8"
+    lc_collate: "en_US.UTF-8"
+    lc_ctype: "en_US.UTF-8"
+    template: "template0"
+  become: yes
+  become_user: "{{ postgresql_user }}"
+
+- name: Connect to {{postgresql_xwiki_db}} database and create user {{postgresql_xwiki_user}} set user's password with no expire date
+  postgresql_user:
+    db: "{{postgresql_xwiki_db}}"
+    name: "{{postgresql_xwiki_user}}"
+    password: "{{postgresql_xwiki_pass}}"
+    expires: "infinity"
+  become: yes
+  become_user: "{{ postgresql_user }}"
+
+- name: GRANT ALL PRIVILEGES ON SCHEMA public TO {{postgresql_xwiki_user}}
+  postgresql_privs:
+    db: "{{postgresql_xwiki_db}}"
+    privs: "ALL"
+    type: "schema"
+    objs: "public"
+    role: "{{postgresql_xwiki_user}}"
+  become: yes
+  become_user: "{{ postgresql_user }}"
+
+- name: Download PostgreSQL JDBC Driver to {{ ansible_env.HOME }}/{{ postgresql_jdbc_driver_filename }}
+  get_url:
+  args:
+    url: "{{ postgresql_jdbc_driver_url }}"
+    dest: "{{ ansible_env.HOME }}/{{ postgresql_jdbc_driver_filename }}"
+    #sha256sum: "{{ postgresql_jdbc_driver_sha256sum }}"
+
+- name: Install PostgreSQL JDBC Driver into jetty
+  copy:
+    remote_src: yes
+    src: "{{ ansible_env.HOME }}/{{ postgresql_jdbc_driver_filename }}"
+    dest: "{{ jetty_user_homedir }}/lib/ext"
+    owner: "{{ jetty_user_name }}"
+    group: "{{ jetty_group_name }}"
+  notify: Restart jetty
+
+###############################################################################
+# xwiki install
+###############################################################################
+- name: Download XWiki
+  get_url:
+  args:
+    url: "{{ xwiki_download_url }}"
+    dest: "{{ ansible_env.HOME }}/{{ xwiki_filename }}"
+    #sha256sum: "{{ xwiki_sha256sum }}"
+
+- name: Create XWiki webapp ROOT directory in jetty
+  file: 
+    path: "{{ jetty_webapps_path }}/ROOT"
+    state: directory 
+    owner: "{{ jetty_user_name }}"
+    group: "{{ jetty_group_name }}"
+
+- name: Install XWiki in jetty
+  unarchive:
+    remote_src: yes
+    src: "{{ ansible_env.HOME }}/{{ xwiki_filename }}"
+    dest: "{{ jetty_webapps_path }}/ROOT"
+    owner: "{{ jetty_user_name }}"
+    group: "{{ jetty_group_name }}"
+    creates: "{{ jetty_webapps_path }}/ROOT/WEB-INF"
+  notify: Restart jetty
+
+# hibernate.cfg.xml is taken from extracted /opt/jetty/webapps/ROOT/WEB-INF/hibernate.cfg.xml
+# commented out the default hsql db commented in the postgres config
+- name: Template hibernate.cfg.xml to {{ jetty_webapps_path }}/ROOT/WEB-INF/hibernate.cfg.xml
+  template:
+    src: hibernate.cfg.xml.j2
+    dest: "{{ jetty_webapps_path }}/ROOT/WEB-INF/hibernate.cfg.xml"
+    owner: "{{ jetty_user_name }}"
+    group: "{{ jetty_group_name }}"
+    mode: '0644'
+  notify: Restart jetty
+
+- name: Create XWiki permanent tmp directory
+  file: 
+    path: "{{ xwiki_tmpdir }}"
+    state: directory 
+    owner: "{{ jetty_user_name }}"
+    group: "{{ jetty_group_name }}"
+
+
+# jetty.sh is taken from extracted /opt/jetty/bin/jetty.sh
+# a) commented out as written in jetty.sh:
+# # To get the service to restart correctly on reboot, uncomment below (3 lines):
+# b) set 
+#    to value same as in templates/jetty-systemd-service.j2
+# c) set xwiki_tmpdir
+# d) set JAVA_OPTIONS jvm settings after tmpdir
+- name: Template jetty.sh to {{ jetty_user_homedir }}/bin/jetty.sh
+  template:
+    src: jetty.sh.j2
+    dest: "{{ jetty_user_homedir }}/bin/jetty.sh"
+    owner: "{{ jetty_user_name }}"
+    group: "{{ jetty_group_name }}"
+    mode: '0755'
+  notify: Restart jetty
+
+- name: Template jetty-etc.conf.sh to {{ jetty_user_homedir }}/etc/jetty.conf (sets jetty.http.port to {{ jetty_port }})
+  template:
+    src: jetty-etc.conf.j2
+    dest: "{{ jetty_user_homedir }}/etc/jetty.conf"
+    owner: "{{ jetty_user_name }}"
+    group: "{{ jetty_group_name }}"
+    mode: '0644'
+  notify: Restart jetty
+
+- name: make restricted port 80 accessible for jetty (if starting on port < 1024 e.g. 80)
+  shell: iptables -t nat -A INPUT -p tcp --dport 80 -j ACCEPT
+  args:
+    executable: /bin/bash
+  become: yes
+
